@@ -1,0 +1,23 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "compile",
+      "type": "shell",
+      "command": "python scripts/compile_contracts.py",
+      "problemMatcher": []
+    },
+    {
+      "label": "test",
+      "type": "shell",
+      "command": "python -m pytest -q",
+      "problemMatcher": []
+    },
+    {
+      "label": "ci",
+      "type": "shell",
+      "command": "python scripts/compile_contracts.py && python scripts/check_loc.py && python -m pytest -q",
+      "problemMatcher": []
+    }
+  ]
+}
