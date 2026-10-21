@@ -1,108 +1,119 @@
 # OryonLendingProtocol
 
-![banner](./assets/banner.png)
+![OryonLendingProtocol](assets/banner.png)
 
-OryonLendingProtocol es un mercado de lending multiactivo escrito en Vyper. El
-protocolo permite aportar liquidez, usar activos admitidos como colateral, abrir
-deuda variable, repagar posiciones y liquidar cuentas que dejan de cumplir los
-umbrales de riesgo.
+Mercado multiactivo de crédito variable en Vyper. Oryon reúne provisión de
+liquidez, posiciones con colateral, deuda indexada, parámetros de riesgo por
+activo y liquidación de cuentas por debajo del umbral. El repositorio contiene
+contratos, utilidades de observación y una consola local de análisis de
+carteras; no incluye claves ni configuración de red externa.
 
-El repositorio esta preparado para auditoria local con Python, Vyper 0.4.3,
-titanoboa y pytest.
+## Arquitectura
 
-## Componentes
-
-```text
-src/
-  OryonLendingPool.vy          Pool principal, mercados, deuda e indices
-  OryonOracle.vy               Oraculo local con reporteros y vigencia
-  OryonRateModel.vy            Curva variable de dos pendientes
-  OryonProtocolLens.vy         Vistas agregadas para integradores
-  OryonRiskRegistry.vy         Registro de perfiles de riesgo
-  OryonInterestLens.vy         Proyecciones de tipos e indices
-  OryonLiquidationPlanner.vy   Planificacion operativa de liquidaciones
-  OryonReserveVault.vy         Gestion auxiliar de reservas
-  OryonExposureJournal.vy      Journal operativo de flujos
-  OryonAccountingReconciler.vy Reconciliacion de snapshots
-  OryonGovernanceQueue.vy      Cola de cambios parametrizados
-  OryonScenarioSimulator.vy    Simulaciones puras de escenarios
-  MockERC20.vy                 Token ERC20 local para pruebas
+```mermaid
+flowchart LR
+    U[Proveedores y prestatarios] --> P[OryonLendingPool]
+    O[OryonOracle<br/>precio y vigencia] --> P
+    P --> M[Mercados<br/>cash, deuda, índices, reservas]
+    P --> A[Cuentas<br/>colateral y principal]
+    P --> L[ProtocolLens y InterestLens]
+    P --> R[RiskRegistry y LiquidationPlanner]
+    P --> C[AccountingReconciler y ExposureJournal]
+    G[GovernanceQueue<br/>propuestas y aprobaciones] -.-> OPS[Operación parametrizada]
+    OPS -.-> P
+    S[Snapshot JSON] --> RC[Risk console<br/>solo lectura]
 ```
 
-## Modelo operativo
+`OryonLendingPool.vy` es la fuente de estado de los saldos. Los módulos de
+observación y planificación no reemplazan sus verificaciones. La cola de
+gobernanza registra y marca propuestas aprobadas; la aplicación de cambios en
+el pool sigue siendo una operación separada del propietario.
 
-Cada activo listado mantiene limites de supply y borrow, factor de colateral,
-umbral de liquidacion, incentivo, close factor, factor de reserva y parametros
-de tipo variable. Las operaciones que dependen de deuda actualizan el indice del
-mercado antes de modificar saldos.
+## Modelo económico
 
-Los usuarios aportan activos al pool y reciben un saldo interno de colateral. Si
-la posicion tiene capacidad disponible, puede abrir deuda sobre cualquier activo
-borrow-enabled con liquidez suficiente. La deuda se representa como principal en
-el ultimo indice observado por la cuenta.
+Los importes de tokens se expresan en unidades mínimas dentro de los contratos.
+Cada activo tiene `unit = 10^decimals` y precio USD con escala `1e18`.
 
-Cuando una posicion baja del umbral de liquidacion, un keeper puede repagar una
-parte de la deuda y recibir colateral transferido desde el pool. El close factor
-limita el tamano de una liquidacion individual.
+```text
+valor_USD(asset, amount) = amount × precio_e18 / unit
+utilización             = deuda_total / (cash + deuda_total)
+deuda_cuenta_actual     = principal × índice_borrow_actual / índice_snapshot
+capacidad_colateral     = Σ valor_USD(colateral) × factor_colateral
+factor_salud            = Σ valor_USD(colateral) × umbral_liquidación / Σ valor_USD(deuda)
+```
 
-## Requisitos
+Todas las divisiones on-chain son enteras. El tipo variable usa una curva de
+dos tramos: hasta `kink` crece con `slope1` y, por encima, con `slope2`. Los
+intereses actualizan deuda e índices; `reserve_factor` separa la porción
+destinada a reservas. `supply_cap`, `borrow_cap`, banderas por mercado y
+`close_factor` acotan las operaciones correspondientes.
 
-- Python 3.13 recomendado.
-- pip.
-- Entorno Bash o PowerShell para los scripts.
+Ejemplo: 10 WETH a 2.000 USD con factor de colateral 0,72 aportan 14.400 USD
+de capacidad. Una deuda de 12.000 USDC deja 2.400 USD de margen de préstamo;
+con umbral de liquidación 0,80, el factor de salud inicial es 1,3333.
 
-## Instalacion
+Más detalle: [arquitectura](docs/arquitectura.md),
+[modelo económico](docs/modelo-economico.md),
+[integración](docs/integracion.md),
+[operación](docs/operacion.md) y [riesgo](docs/riesgo.md).
+
+## Inicio local
+
+Requiere Python 3.13, `pip` y un entorno compatible con Vyper 0.4.3.
 
 ```bash
 python -m venv .venv
 source .venv/bin/activate
 python -m pip install -e ".[dev]"
-```
-
-En PowerShell:
-
-```powershell
-python -m venv .venv
-.\.venv\Scripts\Activate.ps1
-python -m pip install -e ".[dev]"
-```
-
-## Pruebas
-
-```bash
+python scripts/compile_contracts.py
 python -m pytest -q
 ```
 
-La suite cubre:
-
-- supply y actualizacion de liquidez;
-- borrow y registro de deuda variable;
-- repay parcial;
-- accrual de indices de borrow y supply;
-- liquidacion parcial con transferencia de colateral.
-
-## Validacion completa
+En PowerShell active `.venv\Scripts\Activate.ps1` o llame directamente a
+`.venv\Scripts\python.exe`. Para la validación completa:
 
 ```bash
 bash scripts/ci.sh
 ```
 
-En PowerShell:
+El script instala dependencias, compila todos los contratos, comprueba el
+presupuesto de código Vyper y ejecuta pytest. `scripts/tests.sh` ejecuta la
+suite sobre un entorno ya preparado. La CI repite la validación en GitHub
+Actions para PR, `main`, `production` y etiquetas estables.
 
-```powershell
-.\scripts\ci.ps1
+## Consola de riesgo
+
+La consola procesa un snapshot exportado sin conectarse a una cadena ni
+firmar transacciones. Trabaja con cantidades decimales de tokens, no con
+unidades mínimas, y devuelve estimaciones: no constituye una cotización
+on-chain ni sustituye una lectura fresca de oráculo.
+
+```bash
+python -m client.risk_console tests/fixtures/portfolio.json --days 30 --shock WETH=0.70
 ```
 
-El flujo compila todos los contratos Vyper, valida que `src/` permanezca entre
-3.000 y 4.000 LOC y ejecuta la suite de pytest.
+El informe incluye utilización, APR de borrow y supply, proyección lineal de
+reservas, capacidad de préstamo, colchón de liquidación y factor de salud
+actual y tensionado. Los decimales se serializan como cadenas para no perder
+precisión en consumidores JSON.
 
-## Seguridad operativa
+## Superficie del repositorio
 
-Antes de listar un activo se deben revisar precio, decimales, liquidez externa,
-profundidad de mercado, caps, curva de tipos, factor de reserva y parametros de
-liquidacion. Los cambios de riesgo deben pasar por una cola de gobernanza o un
-proceso equivalente con revision separada.
+| Ruta | Función |
+| --- | --- |
+| `src/OryonLendingPool.vy` | Estado de mercados y cuentas, operaciones de crédito |
+| `src/OryonOracle.vy` | Precios, reporteros y caducidad |
+| `src/OryonRateModel.vy` | Curva de tipos reutilizable |
+| `src/OryonProtocolLens.vy` | Consultas agregadas |
+| `src/OryonLiquidationPlanner.vy` | Políticas y planes de keeper |
+| `src/OryonAccountingReconciler.vy` | Checkpoints de conciliación |
+| `client/risk_console.py` | Proyecciones locales de solo lectura |
+| `tests/` | Flujos de contrato y consola |
 
-## Licencia
+## Publicación y seguridad
 
-MIT. Consulte [LICENSE](./LICENSE).
+`Production 1.0.0` identifica el estado versionado del repositorio, no un
+despliegue en una red con fondos. La rama `production` y la etiqueta anotada
+`v1.0.0` deben apuntar al mismo commit que `main`; el release se publica solo
+tras comprobar CI. Revise [SECURITY.md](SECURITY.md) antes de integrar los
+contratos en otro sistema. Licencia MIT en [LICENSE](LICENSE).

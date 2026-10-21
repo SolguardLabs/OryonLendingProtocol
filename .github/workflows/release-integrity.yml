@@ -1,0 +1,30 @@
+name: release-integrity
+
+on:
+  push:
+    tags: ["v*"]
+  release:
+    types: [published]
+
+jobs:
+  refs:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          fetch-depth: 0
+      - name: Verify stable refs
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ github.event.release.tag_name || github.ref_name }}
+        run: |
+          set -euo pipefail
+          git fetch origin main production --tags
+          [[ "$RELEASE_TAG" == v* ]]
+          [[ "$(git cat-file -t "refs/tags/$RELEASE_TAG")" == tag ]]
+          main_sha="$(git rev-parse refs/remotes/origin/main)"
+          production_sha="$(git rev-parse refs/remotes/origin/production)"
+          tag_sha="$(git rev-parse "refs/tags/$RELEASE_TAG^{}")"
+          [[ "$main_sha" == "$production_sha" ]]
+          [[ "$main_sha" == "$tag_sha" ]]
+          printf 'main=%s production=%s tag=%s\n' "$main_sha" "$production_sha" "$tag_sha"
