@@ -27,6 +27,7 @@ find_python_with_pip() {
 PYTHON="$(find_python_with_pip)"
 
 "${PYTHON}" -m pip install -e ".[dev]"
+"${PYTHON}" -m compileall -q client scripts tests
 "${PYTHON}" scripts/compile_contracts.py
 "${PYTHON}" scripts/check_loc.py
 "${PYTHON}" -m pytest -q
